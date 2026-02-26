@@ -77,7 +77,7 @@ def ocr_and_calculate(image_path):
         return result
 
     except Exception as e:
-        print(e)
+        # print(e)
         return None
 
 def process_captcha(image_path, s_keep=0.45, v_keep=0.35, v_max=0.98):

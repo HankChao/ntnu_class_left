@@ -1,13 +1,20 @@
 import os
+os.environ['ORT_LOGGING_LEVEL'] = '3'  # 隱藏 ONNX Runtime 警告訊息
+
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 from captcha_ocr import process_captcha
 from course_manager import CourseManager
 from datetime import datetime
 import time
+from logger import playwright_logger as logger
 
 # 載入環境變數
 load_dotenv()
+
+# 確保 ocr_img 目錄存在
+if not os.path.exists("./ocr_img"):
+    os.makedirs("./ocr_img", exist_ok=True)
 
 def playwright_main():
     """主程式函數"""
@@ -24,18 +31,22 @@ def playwright_main():
     manager = CourseManager("sub.json")
 
     # 使用 Playwright
-    with sync_playwright() as p:
-        # 啟動瀏覽器（可選擇 chromium, firefox, webkit）
-        # headless=True 表示背景執行（無視窗）
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context()     
-        page = context.new_page()
+    try:
+        with sync_playwright() as p:
+            # 啟動瀏覽器（可選擇 chromium, firefox, webkit）
+            # headless=True 表示背景執行（無視窗）
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context()     
+            page = context.new_page()
 
-        while True:
-            playwright_run(page, config, context, manager)
-            time.sleep(config["login_retry_interval"])  # 等待n秒後重試登入
+            while True:
+                playwright_run(page, config, context, manager)
+                time.sleep(config["login_retry_interval"])  # 等待n秒後重試登入
 
-        input("按 Enter 鍵退出...")
+    except KeyboardInterrupt:
+        logger.log("🛑 收到停止信號，playwright_run 已處理登出")
+    except Exception as e:
+        logger.log(f"❌ 主程式錯誤: {e}")
 
 def playwright_run(page, config, context, manager):
     try:
@@ -67,18 +78,25 @@ def playwright_run(page, config, context, manager):
                     if course_info:
                         manager.update_course_info(serial, course_info[serial])
                     else:
-                        print(f"⚠️ 無法獲取課程資訊: {serial}")
+                        # print(f"⚠️ 無法獲取課程資訊: {serial}")
+                        logger.log(f"⚠️ 無法獲取課程資訊: {serial}")
                 manager.save_courses()  # 每輪結束後儲存
                 time.sleep(config["search_interval"])  # 每n秒查詢一輪
             
         else:
-            print("❌ 無法進入選課頁面")
+            # print("❌ 無法進入選課頁面")
+            logger.log("❌ 無法進入選課頁面")
 
+    except KeyboardInterrupt:
+        logger.log("⚠️ playwright_run 收到中斷信號")
+        raise  # 重新拋出以便 playwright_main 處理
     except Exception as e:
-        print(f"❌ 發生錯誤: {e}")
-        print(f"錯誤類型: {type(e).__name__}")
-        import traceback
-        traceback.print_exc()
+        # print(f"❌ 發生錯誤: {e}")
+        logger.log(f"❌ 發生錯誤: {e}")
+        # print(f"錯誤類型: {type(e).__name__}")
+        logger.log(f"錯誤類型: {type(e).__name__}")
+        # import traceback
+        # traceback.print_exc()
     
     finally:
         sys_logout(page)
@@ -97,7 +115,8 @@ def save_captcha_image(page, config, context):
         with open("./ocr_img/captcha.png", "wb") as f:
             f.write(response.body())
         
-        print("✅ 驗證碼已儲存")
+        # print("✅ 驗證碼已儲存")
+        logger.log("✅ 驗證碼已儲存")
     finally:
         # 關閉分頁
         captcha_page.close()
@@ -120,17 +139,33 @@ def sys_login(page, config, context):
     try:
         time.sleep(2)  # 等待登入結果
         if not page.wait_for_selector("text=下一頁 (開始選課)", timeout=3000).is_visible():
-            print("❌ 驗證碼錯誤，請重新嘗試")
+            # print("❌ 驗證碼錯誤，請重新嘗試")
+            logger.log("❌ 驗證碼錯誤，請重新嘗試")
             return False
         return True
     except Exception as e:
-        print(f"❌ 登入失敗: {e}")
+        # print(f"❌ 登入失敗: {e}")
+        logger.log(f"❌ 登入失敗: {e}")
         return False
 
 def sys_logout(page):
-    time.sleep(2)  # 等待頁面載入
-    page.wait_for_selector("a.x-btn-button span:has-text('登出')", timeout=3000)  # 等待登出結果
-    page.click("a.x-btn-button span:has-text('登出')")
+    """登出系統，確保安全退出"""
+    try:
+        if page.is_closed():
+            logger.log("⚠️ 頁面已關閉，跳過登出")
+            return
+        
+        time.sleep(1)  # 等待頁面載入
+        
+        # 嘗試查找並點擊登出按鈕
+        logout_button = page.wait_for_selector("a.x-btn-button span:has-text('登出')", timeout=5000)
+        if logout_button:
+            page.click("a.x-btn-button span:has-text('登出')")
+            logger.log("✅ 已點擊登出按鈕")
+            time.sleep(1)
+    except Exception as e:
+        logger.log(f"⚠️ 登出時發生錯誤（可能已登出）: {e}")
+
 
 
 def to_search_page(page):
@@ -138,16 +173,20 @@ def to_search_page(page):
     try:
         page.wait_for_selector("a.x-btn-button span:has-text('OK')", timeout=2000)
         page.click("a.x-btn-button span:has-text('OK')")
-        print("已點擊登入後的 OK")
+        # print("已點擊登入後的 OK")
+        logger.log("已點擊登入後的 OK")
     except:
-        print("沒有 OK 按鈕,跳過")
+        # print("沒有 OK 按鈕,跳過")
+        logger.log("沒有 OK 按鈕,跳過")
     
     # 點擊「下一頁 (開始選課)」進入主頁面
     try:
         page.click("text=下一頁 (開始選課)")
-        print("✅ 已點擊 '下一頁 (開始選課)'")
+        # print("✅ 已點擊 '下一頁 (開始選課)'")
+        logger.log("✅ 已點擊 '下一頁 (開始選課)'")
     except Exception as e:
-        print(f"❌ 無法點擊下一頁: {e}")
+        # print(f"❌ 無法點擊下一頁: {e}")
+        logger.log(f"❌ 無法點擊下一頁: {e}")
         return None
     
     # 等待 iframe 出現
@@ -155,20 +194,25 @@ def to_search_page(page):
     time.sleep(2)
     
     # 切換到「我的選課」tab 的 iframe
-    print("切換到 iframe...")
+    # print("切換到 iframe...")
+    logger.log("切換到 iframe...")
     iframe = page.frame_locator("iframe[name='stfseldListDo']")
     
     # 在 iframe 內點擊「查詢課程」
     try:
         iframe.locator("a#query-btnEl").filter(has_text="查詢課程").click(timeout=10000)
-        print("✅ 已點擊 '查詢課程'")
+        # print("✅ 已點擊 '查詢課程'")
+        logger.log("✅ 已點擊 '查詢課程'")
     except Exception as e:
-        print(f"❌ 無法點擊查詢課程: {e}")
+        # print(f"❌ 無法點擊查詢課程: {e}")
+        logger.log(f"❌ 無法點擊查詢課程: {e}")
         try:
             iframe.locator("a#add-btnEl").filter(has_text="加選").click(timeout=10000)
-            print("✅ 已點擊 '加選'")
+            # print("✅ 已點擊 '加選'")
+            logger.log("✅ 已點擊 '加選'")
         except Exception as e:
-            print(f"❌ 無法點擊加選: {e}")
+            # print(f"❌ 無法點擊加選: {e}")
+            logger.log(f"❌ 無法點擊加選: {e}")
             return None
     
     time.sleep(1)
@@ -176,7 +220,8 @@ def to_search_page(page):
     # 後續操作也要在 iframe 內
     iframe.locator("input#comboDeptCode-inputEl").click(timeout=5000)
     iframe.locator("text=所有系所").click(timeout=5000)
-    print("✅ 已選擇 '所有系所'")
+    # print("✅ 已選擇 '所有系所'")
+    logger.log("✅ 已選擇 '所有系所'")
 
     return iframe
 
@@ -188,7 +233,8 @@ def search_course(iframe, serial_number):
 
     #查詢按鈕
     iframe.locator("a.x-btn-button span:has-text('查詢')").click(timeout=5000)
-    print(f"✅ 已搜尋課程: {serial_number}")
+    # print(f"✅ 已搜尋課程: {serial_number}")
+    logger.log(f"✅ 已搜尋課程: {serial_number}")
 
     # 點課程
     iframe.locator("tr[data-boundview='gridview-1085']").click(timeout=10000)
@@ -210,7 +256,8 @@ def search_course(iframe, serial_number):
     # 獲取課程資訊
     course_info = get_course_info(iframe, course_name, course_teacher, time_place, 
                                    course_code, credit, must, department, used_eng)
-    print(f"📚 課程資訊: {course_info}")
+    # print(f"📚 課程資訊: {course_info}")
+    logger.log(f"📚 課程資訊: {course_info}")
 
     iframe.locator("img.x-tool-close").click(timeout=5000)
     
@@ -261,8 +308,10 @@ def get_course_info(iframe, course_name, course_teacher, time_place,
         }
     }
     
-    print('-'*10)
-    print(f"✅ 已獲取課程資訊: {serial_number}")
+    # print('-'*10)
+    logger.log('-'*10)
+    # print(f"✅ 已獲取課程資訊: {serial_number}")
+    logger.log(f"✅ 已獲取課程資訊: {serial_number}")
     return course_dict
 
 playwright_main()

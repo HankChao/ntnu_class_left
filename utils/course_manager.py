@@ -18,7 +18,7 @@ class CourseManager:
                         return json.load(f)
                 return {}
         except Timeout:
-            print("⚠️ 檔案被佔用超過 30 秒，使用空白資料")
+            # print("⚠️ 檔案被佔用超過 30 秒，使用空白資料")
             return {}
     
     def save_courses(self, merge_mode=False):
@@ -52,16 +52,18 @@ class CourseManager:
                 # 寫入檔案
                 with open(self.json_path, "w", encoding="utf-8") as f:
                     json.dump(sorted_courses, f, indent=4, ensure_ascii=False)
-                print(f"✅ 已儲存到 {self.json_path}")
+                # print(f"✅ 已儲存到 {self.json_path}")
                 
                 # 更新記憶體
                 self.courses = sorted_courses
         except Timeout:
-            print(f"❌ 無法儲存，檔案被其他程式鎖定超過 30 秒")
+            # print(f"❌ 無法儲存，檔案被其他程式鎖定超過 30 秒")
+            pass
         except Exception as e:
-            print(f"❌ 儲存失敗: {e}")
-            import traceback
-            traceback.print_exc()
+            # print(f"❌ 儲存失敗: {e}")
+            # import traceback
+            # traceback.print_exc()
+            pass
     
     def add_course(self, serial_number):
         """新增課程（只有 key，沒有 value）"""
@@ -71,18 +73,20 @@ class CourseManager:
         if serial_number not in self.courses:
             self.courses[serial_number] = None
             self.save_courses(merge_mode=False)  # 完全覆蓋模式
-            print(f"✅ 已新增課程: {serial_number}")
+            # print(f"✅ 已新增課程: {serial_number}")
         else:
-            print(f"⚠️ 課程已存在: {serial_number}")
+            # print(f"⚠️ 課程已存在: {serial_number}")
+            pass
     
     def update_course_info(self, serial_number, course_info):
         """更新課程資訊"""
         if serial_number in self.courses:
             self.courses[serial_number] = course_info
             self.save_courses(merge_mode=True)  # 合併模式，不影響其他課程
-            print(f"✅ 已更新課程資訊: {serial_number}")
+            # print(f"✅ 已更新課程資訊: {serial_number}")
         else:
-            print(f"❌ 課程不存在: {serial_number}")
+            # print(f"❌ 課程不存在: {serial_number}")
+            pass
     
     def get_pending_courses(self):
         """取得需要查詢的課程（value 為 None 的）"""
@@ -100,6 +104,7 @@ class CourseManager:
         if serial_number in self.courses:
             del self.courses[serial_number]
             self.save_courses(merge_mode=False)  # 完全覆蓋模式
-            print(f"✅ 已移除課程: {serial_number}")
+            # print(f"✅ 已移除課程: {serial_number}")
         else:
-            print(f"❌ 課程不存在: {serial_number}")
+            # print(f"❌ 課程不存在: {serial_number}")
+            pass

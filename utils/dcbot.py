@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from course_manager import CourseManager
+from logger import bot_logger as logger
 
 # 載入環境變數
 load_dotenv()
@@ -36,16 +37,19 @@ class CourseBot(commands.Bot):
             guild = discord.Object(id=int(GUILD_ID))
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
-            print("✅ Slash commands 已同步（伺服器模式，立即生效）")
+            # print("✅ Slash commands 已同步（伺服器模式，立即生效）")
+            logger.log("✅ Slash commands 已同步（伺服器模式，立即生效）")
         else:
             # 正式模式：全域同步，需等 1 小時
             await self.tree.sync()
-            print("✅ Slash commands 已同步（全域模式，需等 1 小時生效）")
+            # print("✅ Slash commands 已同步（全域模式，需等 1 小時生效）")
+            logger.log("✅ Slash commands 已同步（全域模式，需等 1 小時生效）")
         
         # 啟動監控任務
         if CHANNEL_ID:
             self.monitor_courses.start()
-            print("✅ 課程監控任務已啟動（每 1 分鐘檢查一次，同課程 10 分鐘內只通知一次）")
+            # print("✅ 課程監控任務已啟動（每 1 分鐘檢查一次，同課程 10 分鐘內只通知一次）")
+            logger.log("✅ 課程監控任務已啟動（每 1 分鐘檢查一次，同課程 10 分鐘內只通知一次）")
     
     @tasks.loop(minutes=1)
     async def monitor_courses(self):
@@ -55,7 +59,8 @@ class CourseBot(commands.Bot):
         
         channel = self.get_channel(int(CHANNEL_ID))
         if not channel:
-            print(f"❌ 找不到頻道 ID: {CHANNEL_ID}")
+            # print(f"❌ 找不到頻道 ID: {CHANNEL_ID}")
+            logger.log(f"❌ 找不到頻道 ID: {CHANNEL_ID}")
             return
         
         # 重新載入課程資料（Playwright 每 30 秒更新，資料永遠是最新的）
@@ -105,17 +110,22 @@ class CourseBot(commands.Bot):
             
             # 發送通知
             try:
+                # 每次發送通知前都先發送分隔線
+                await channel.send("─────────────────────────")
                 await channel.send(embed=embed)
-                print(f"✅ 已發送通知: {serial} - {course_name} (剩餘 {remaining} 名額)")
+                # print(f"✅ 已發送通知: {serial} - {course_name} (剩餘 {remaining} 名額)")
+                logger.log(f"✅ 已發送通知: {serial} - {course_name} (剩餘 {remaining} 名額)")
                 self.last_notified[serial] = now
             except discord.HTTPException as e:
-                print(f"❌ 發送通知失敗: {serial} - {e}")
+                # print(f"❌ 發送通知失敗: {serial} - {e}")
+                logger.log(f"❌ 發送通知失敗: {serial} - {e}")
     
     @monitor_courses.before_loop
     async def before_monitor(self):
         """等待 Bot 連線完成"""
         await self.wait_until_ready()
-        print("🔍 開始監控課程餘額...")
+        # print("🔍 開始監控課程餘額...")
+        logger.log("🔍 開始監控課程餘額...")
     
     def calculate_remaining_seats(self, info: dict) -> int:
         """計算剩餘名額"""
@@ -160,14 +170,18 @@ bot = CourseBot()
 
 @bot.event
 async def on_ready():
-    print(f'✅ Bot 已登入為 {bot.user}')
+    # print(f'✅ Bot 已登入為 {bot.user}')
+    logger.log(f'✅ Bot 已登入為 {bot.user}')
     
     # 檢查是否已加入伺服器
     if not bot.guilds:
-        print("⚠️ Bot 尚未加入任何伺服器！")
-        print("📌 請前往 Discord Developer Portal 使用 OAuth2 URL Generator 邀請 Bot")
+        # print("⚠️ Bot 尚未加入任何伺服器！")
+        logger.log("⚠️ Bot 尚未加入任何伺服器！")
+        # print("📌 請前往 Discord Developer Portal 使用 OAuth2 URL Generator 邀請 Bot")
+        logger.log("📌 請前往 Discord Developer Portal 使用 OAuth2 URL Generator 邀請 Bot")
     else:
-        print(f'✅ 伺服器: {", ".join([g.name for g in bot.guilds])}')
+        # print(f'✅ 伺服器: {", ".join([g.name for g in bot.guilds])}')
+        logger.log(f'✅ 伺服器: {", ".join([g.name for g in bot.guilds])}')
     
     # 設定狀態
     await bot.change_presence(
