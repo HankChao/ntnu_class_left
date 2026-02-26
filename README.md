@@ -4,6 +4,13 @@
 ## 環境設置
 ```bash
 pip install -r requirements.txt
+
+playwright install
+
+#在該專案中安裝 ddddocr
+git clone https://github.com/sml2h3/ddddocr.git
+cd ddddocr
+pip install .
 ```
 
 ### .env設置

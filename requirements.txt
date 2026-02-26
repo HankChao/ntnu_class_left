@@ -9,7 +9,6 @@ playwright==1.58.0
 Pillow==11.3.0
 opencv-python==4.11.0.86
 numpy==2.2.6
-ddddocr==1.6.0
 
 # 核心依賴 - 檔案鎖定（並發控制）
 filelock==3.24.3

@@ -5,3 +5,4 @@ __pycache__
 ocr_img/*.png
 sub.json
 sub.json.lock
+.venv
