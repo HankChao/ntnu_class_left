@@ -1,0 +1,268 @@
+import os
+from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright
+from captcha_ocr import process_captcha
+from course_manager import CourseManager
+from datetime import datetime
+import time
+
+# 載入環境變數
+load_dotenv()
+
+def playwright_main():
+    """主程式函數"""
+    # 從環境變數讀取設定
+    config = {
+        "account": os.getenv("ACCOUNT"),
+        "password": os.getenv("PASSWORD"),
+        "sys": os.getenv("SYS_URL"),
+        "sys_id": os.getenv("SYS_ID"),
+        "login_retry_interval": int(os.getenv("LOGIN_RETRY_INTERVAL", "30")),
+        "search_interval": int(os.getenv("SEARCH_INTERVAL", "20"))
+    }
+
+    manager = CourseManager("sub.json")
+
+    # 使用 Playwright
+    with sync_playwright() as p:
+        # 啟動瀏覽器（可選擇 chromium, firefox, webkit）
+        # headless=True 表示背景執行（無視窗）
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()     
+        page = context.new_page()
+
+        while True:
+            playwright_run(page, config, context, manager)
+            time.sleep(config["login_retry_interval"])  # 等待n秒後重試登入
+
+        input("按 Enter 鍵退出...")
+
+def playwright_run(page, config, context, manager):
+    try:
+        page.goto(config["sys"])
+
+        save_captcha_image(page, config, context)
+        login = sys_login(page, config, context)
+
+        while not login:
+            page.wait_for_selector("a.x-btn-button span:has-text('OK')", timeout=3000)  # 等待登入結果
+            page.click("a.x-btn-button span:has-text('OK')")
+
+            save_captcha_image(page, config, context)
+            login = sys_login(page, config, context)
+            time.sleep(1)
+        
+        iframe = to_search_page(page)
+
+        if iframe:
+            start_time = time.time()
+            while time.time() - start_time < 1100:  # 運行1100秒結束
+
+                manager.courses = manager.load_courses()  # 每次迴圈開始時重新載入課程清單，確保最新狀態     
+                all_courses = manager.get_all_courses()
+                
+                for serial in all_courses:
+                    course_info = search_course(iframe, serial)
+                    time.sleep(0.5)  # 每次查詢後等待0.5秒，避免過快
+                    if course_info:
+                        manager.update_course_info(serial, course_info[serial])
+                    else:
+                        print(f"⚠️ 無法獲取課程資訊: {serial}")
+                manager.save_courses()  # 每輪結束後儲存
+                time.sleep(config["search_interval"])  # 每n秒查詢一輪
+            
+        else:
+            print("❌ 無法進入選課頁面")
+
+    except Exception as e:
+        print(f"❌ 發生錯誤: {e}")
+        print(f"錯誤類型: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+    
+    finally:
+        sys_logout(page)
+
+def save_captcha_image(page, config, context):
+    """儲存驗證碼圖片"""
+
+    captcha_page = context.new_page()
+    
+    try:
+        captcha_url = f"https://cos{config['sys_id']}s.ntnu.edu.tw/AasEnrollStudent/RandImage"
+        captcha_page.goto(captcha_url)
+        time.sleep(1)  # 等待圖片載入   
+
+        response = captcha_page.request.get(captcha_url)
+        with open("./ocr_img/captcha.png", "wb") as f:
+            f.write(response.body())
+        
+        print("✅ 驗證碼已儲存")
+    finally:
+        # 關閉分頁
+        captcha_page.close()
+    return
+
+def sys_login(page, config, context):
+    """模擬登入系統"""
+    page.fill("input[name='userid']", config["account"])
+    page.fill("input[name='password']", config["password"])
+    
+    captcha = process_captcha("./ocr_img/captcha.png")
+    while captcha is None:
+        save_captcha_image(page, config, context)
+        captcha = process_captcha("./ocr_img/captcha.png")
+
+    page.fill("input[name='validateCode']", captcha)
+    
+    page.click("a.x-btn-button span:has-text('登入')")
+
+    try:
+        time.sleep(2)  # 等待登入結果
+        if not page.wait_for_selector("text=下一頁 (開始選課)", timeout=3000).is_visible():
+            print("❌ 驗證碼錯誤，請重新嘗試")
+            return False
+        return True
+    except Exception as e:
+        print(f"❌ 登入失敗: {e}")
+        return False
+
+def sys_logout(page):
+    time.sleep(2)  # 等待頁面載入
+    page.wait_for_selector("a.x-btn-button span:has-text('登出')", timeout=3000)  # 等待登出結果
+    page.click("a.x-btn-button span:has-text('登出')")
+
+
+def to_search_page(page):
+    # 處理登入後的彈窗
+    try:
+        page.wait_for_selector("a.x-btn-button span:has-text('OK')", timeout=2000)
+        page.click("a.x-btn-button span:has-text('OK')")
+        print("已點擊登入後的 OK")
+    except:
+        print("沒有 OK 按鈕,跳過")
+    
+    # 點擊「下一頁 (開始選課)」進入主頁面
+    try:
+        page.click("text=下一頁 (開始選課)")
+        print("✅ 已點擊 '下一頁 (開始選課)'")
+    except Exception as e:
+        print(f"❌ 無法點擊下一頁: {e}")
+        return None
+    
+    # 等待 iframe 出現
+    page.wait_for_selector("iframe[name='stfseldListDo']", timeout=15000)
+    time.sleep(2)
+    
+    # 切換到「我的選課」tab 的 iframe
+    print("切換到 iframe...")
+    iframe = page.frame_locator("iframe[name='stfseldListDo']")
+    
+    # 在 iframe 內點擊「查詢課程」
+    try:
+        iframe.locator("a#query-btnEl").filter(has_text="查詢課程").click(timeout=10000)
+        print("✅ 已點擊 '查詢課程'")
+    except Exception as e:
+        print(f"❌ 無法點擊查詢課程: {e}")
+        try:
+            iframe.locator("a#add-btnEl").filter(has_text="加選").click(timeout=10000)
+            print("✅ 已點擊 '加選'")
+        except Exception as e:
+            print(f"❌ 無法點擊加選: {e}")
+            return None
+    
+    time.sleep(1)
+    
+    # 後續操作也要在 iframe 內
+    iframe.locator("input#comboDeptCode-inputEl").click(timeout=5000)
+    iframe.locator("text=所有系所").click(timeout=5000)
+    print("✅ 已選擇 '所有系所'")
+
+    return iframe
+
+def search_course(iframe, serial_number):
+    """搜尋課程"""
+    #填開課序號
+    iframe.locator("input#serialNo-inputEl").fill(serial_number)
+    time.sleep(1)
+
+    #查詢按鈕
+    iframe.locator("a.x-btn-button span:has-text('查詢')").click(timeout=5000)
+    print(f"✅ 已搜尋課程: {serial_number}")
+
+    # 點課程
+    iframe.locator("tr[data-boundview='gridview-1085']").click(timeout=10000)
+    time.sleep(0.5)
+
+    course_name = iframe.locator("td.x-grid-cell-gridcolumn-1070").inner_text(timeout=5000)#科目名稱
+    course_teacher = iframe.locator("td.x-grid-cell-gridcolumn-1071").inner_text(timeout=5000)#教師
+    time_place = iframe.locator("td.x-grid-cell-gridcolumn-1072").inner_text(timeout=5000)#上課時間地點
+    used_eng = iframe.locator("td.x-grid-cell-gridcolumn-1073").inner_text(timeout=5000)#全英語授課(是/否)
+    credit = iframe.locator("td.x-grid-cell-gridcolumn-1074").inner_text(timeout=5000)#學分
+    course_code = iframe.locator("td.x-grid-cell-gridcolumn-1075").inner_text(timeout=5000)#科目代碼
+    must = iframe.locator("td.x-grid-cell-gridcolumn-1076").inner_text(timeout=5000)#必修/選修
+    department = iframe.locator("td.x-grid-cell-gridcolumn-1078").inner_text(timeout=5000)#開課系所
+
+
+    # 看課程資訊
+    iframe.locator("span#button-1087-btnInnerEl").click()
+    
+    # 獲取課程資訊
+    course_info = get_course_info(iframe, course_name, course_teacher, time_place, 
+                                   course_code, credit, must, department, used_eng)
+    print(f"📚 課程資訊: {course_info}")
+
+    iframe.locator("img.x-tool-close").click(timeout=5000)
+    
+    return course_info
+
+def clean_text(text):
+    """清理文本中的全角空格和多餘空白"""
+    return text.replace('\u3000', '').strip()
+
+def get_course_info(iframe, course_name, course_teacher, time_place, 
+                    course_code, credit, must, department, used_eng):
+    """獲取課程資訊並返回字典"""
+    # 等待窗口出現
+    time.sleep(0.5)
+    iframe = iframe.frame_locator("iframe.x-window-item")
+    
+    # 使用 locator 定位元素並獲取內容，並清理文本
+    serial_number = clean_text(iframe.locator("div#displayfield-1011-inputEl").inner_text())
+    stu_limit = clean_text(iframe.locator("div#displayfield-1012-inputEl").inner_text())
+    new_stu_keep = clean_text(iframe.locator("div#displayfield-1013-inputEl").inner_text())
+    alreay_stu = clean_text(iframe.locator("div#displayfield-1014-inputEl").inner_text())
+    still_not_stu = clean_text(iframe.locator("div#displayfield-1015-inputEl").inner_text())
+    code_stu = clean_text(iframe.locator("div#displayfield-1016-inputEl").inner_text())
+    used_code_stu = clean_text(iframe.locator("div#displayfield-1017-inputEl").inner_text())
+    class_limit = clean_text(iframe.locator("div#displayfield-1018-inputEl").inner_text())
+    note = clean_text(iframe.locator("div#displayfield-1019-inputEl").inner_text())
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 組合成字典，以 serial_number 為 key
+    course_dict = {
+        serial_number: {
+            "課程名稱": course_name,
+            "科目代碼": course_code,
+            "教師": course_teacher,
+            "上課時間地點": time_place,
+            "學分": credit,
+            "必修/選修": must,
+            "開課系所": department,
+            "全英語授課": used_eng,
+            "限修人數": stu_limit,
+            "保留新生人數": new_stu_keep,
+            "已分發人數": alreay_stu,
+            "未分發人數": still_not_stu,
+            "授權碼人數": code_stu,
+            "授權碼選課人數": used_code_stu,
+            "限修條件": class_limit,
+            "備註": note,
+            "更新時間(timestamp)": timestamp
+        }
+    }
+    
+    print('-'*10)
+    print(f"✅ 已獲取課程資訊: {serial_number}")
+    return course_dict
+
+playwright_main()

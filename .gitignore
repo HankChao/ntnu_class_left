@@ -1,0 +1,7 @@
+config.json
+ddddocr
+.env
+__pycache__
+ocr_img/*.png
+sub.json
+sub.json.lock
