@@ -5,9 +5,31 @@ NTNU 課程名額監控系統 - 主程式
 import subprocess
 import sys
 import os
-import sys
+import json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
 from logger import main_logger as logger
+
+# 初始化必要的目錄和文件
+def init_directories():
+    """建立必要的目錄和文件"""
+    # 建立 log 目錄
+    if not os.path.exists("./log"):
+        os.makedirs("./log", exist_ok=True)
+        logger.log("✅ 已建立 log 目錄")
+    
+    # 建立 ocr_img 目錄
+    if not os.path.exists("./ocr_img"):
+        os.makedirs("./ocr_img", exist_ok=True)
+        logger.log("✅ 已建立 ocr_img 目錄")
+    
+    # 建立 sub.json 檔案
+    if not os.path.exists("./sub.json"):
+        with open("./sub.json", "w", encoding="utf-8") as f:
+            json.dump({}, f, ensure_ascii=False, indent=2)
+        logger.log("✅ 已建立 sub.json 檔案")
+
+# 執行初始化
+init_directories()
 
 # 啟動兩個 Python 程式
 processes = []

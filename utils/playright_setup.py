@@ -7,7 +7,40 @@ from captcha_ocr import process_captcha
 from course_manager import CourseManager
 from datetime import datetime
 import time
+import signal
+import sys as system
 from logger import playwright_logger as logger
+
+# 全局變數，用於儲存當前頁面以便在信號處理中使用
+current_page = None
+is_shutting_down = False
+is_logged_in = False  # 追蹤是否已登入（點擊下一頁後）
+
+def signal_handler(signum, frame):
+    """處理終止信號（SIGTERM 和 SIGINT）"""
+    global is_shutting_down
+    if is_shutting_down:
+        return  # 避免重複處理
+    
+    is_shutting_down = True
+    signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+    logger.log(f"🛑 收到 {signal_name} 信號，正在安全關閉...")
+    
+    # 只有在已登入狀態才嘗試登出
+    if current_page and is_logged_in:
+        try:
+            sys_logout(current_page)
+        except Exception as e:
+            logger.log(f"⚠️ 信號處理中登出失敗: {e}")
+    elif not is_logged_in:
+        logger.log("ℹ️ 尚未登入，跳過登出程序")
+    
+    logger.log("👋 程式已安全退出")
+    system.exit(0)
+
+# 註冊信號處理器
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 # 載入環境變數
 load_dotenv()
@@ -25,7 +58,8 @@ def playwright_main():
         "sys": os.getenv("SYS_URL"),
         "sys_id": os.getenv("SYS_ID"),
         "login_retry_interval": int(os.getenv("LOGIN_RETRY_INTERVAL", "30")),
-        "search_interval": int(os.getenv("SEARCH_INTERVAL", "20"))
+        "search_interval": int(os.getenv("SEARCH_INTERVAL", "20")),
+        "website_error_retry_interval": int(os.getenv("WEBSITE_ERROR_RETRY_INTERVAL", "300"))
     }
 
     manager = CourseManager("sub.json")
@@ -33,7 +67,7 @@ def playwright_main():
     # 使用 Playwright
     try:
         with sync_playwright() as p:
-            while True:
+            while not is_shutting_down:
                 browser = None
                 try:
                     # 每次循環都重新啟動瀏覽器（可選擇 chromium, firefox, webkit）
@@ -57,8 +91,9 @@ def playwright_main():
                     except Exception as e:
                         logger.log(f"⚠️ 關閉瀏覽器時發生錯誤: {e}")
                 
-                logger.log(f"⏳ 等待 {config['website_error_retry_interval']} 秒後重新啟動...")
-                time.sleep(config["website_error_retry_interval"])  # 等待n秒後重新啟動
+                if not is_shutting_down:
+                    logger.log(f"⏳ 等待 {config['website_error_retry_interval']} 秒後重新啟動...")
+                    time.sleep(config["website_error_retry_interval"])  # 等待n秒後重新啟動
 
     except KeyboardInterrupt:
         logger.log("🛑 收到停止信號，程式結束")
@@ -66,6 +101,10 @@ def playwright_main():
         logger.log(f"❌ 主程式錯誤: {e}")
 
 def playwright_run(page, config, context, manager):
+    global current_page, is_logged_in
+    current_page = page  # 儲存當前頁面供信號處理器使用
+    is_logged_in = False  # 重置登入狀態
+    
     try:
         logger.log(f"🌐 正在訪問網站: {config['sys']}")
         page.goto(config["sys"], wait_until="networkidle", timeout=60000)  # 等待網絡空閒
@@ -85,16 +124,39 @@ def playwright_run(page, config, context, manager):
         login = sys_login(page, config, context)
 
         while not login:
-            page.wait_for_selector("a.x-btn-button span:has-text('OK')", timeout=3000)  # 等待登入結果
-            page.click("a.x-btn-button span:has-text('OK')")
+            try:
+                page.wait_for_selector("a.x-btn-button span:has-text('OK')", timeout=5000)  # 等待登入結果
+                page.click("a.x-btn-button span:has-text('OK')")
+            except Exception:
+                logger.log("⚠️ 未知登入問題，可能沒有 OK 按鈕")
+                #嘗試重載頁面
+                try:
+                    logger.log(f"🌐 正在訪問網站: {config['sys']}")
+                    page.goto(config["sys"], wait_until="networkidle", timeout=60000)  # 等待網絡空閒
+                    logger.log("✅ 頁面載入完成")
+                except Exception as e:
+                    logger.log(f"⚠️ 頁面載入失敗: {e}")
+                    raise  # 重新拋出，觸發重啟
+            
+            try:
+                page.wait_for_selector("input[name='userid']", timeout=10000)
+                logger.log("✅ 登入表單已載入")
+            except Exception as e:
+                logger.log(f"⚠️ 未找到登入表單，可能頁面載入異常")
+                logger.log(f"📄 當前頁面標題: {page.title()}")
+                logger.log(f"📍 當前頁面 URL: {page.url}")
+                raise  # 重新拋出，觸發重啟
 
             save_captcha_image(page, config, context)
             login = sys_login(page, config, context)
             time.sleep(1)
         
         iframe = to_search_page(page)
-
+        
         if iframe:
+            # 成功進入選課頁面，設定已登入標誌
+            is_logged_in = True
+            logger.log("✅ 已進入選課頁面，登入狀態啟用")
             start_time = time.time()
             while time.time() - start_time < 1100:  # 運行1100秒結束
 
@@ -115,6 +177,7 @@ def playwright_run(page, config, context, manager):
         else:
             # print("❌ 無法進入選課頁面")
             logger.log("❌ 無法進入選課頁面")
+            raise Exception("無法進入選課頁面")  # 拋出異常觸發重啟
 
     except KeyboardInterrupt:
         logger.log("⚠️ playwright_run 收到中斷信號")
@@ -125,7 +188,12 @@ def playwright_run(page, config, context, manager):
         raise  # 重新拋出例外，讓 playwright_main 處理並重啟瀏覽器
     
     finally:
-        sys_logout(page)
+        if not is_shutting_down and is_logged_in:  # 只有不是被信號終止且已登入時才登出
+            sys_logout(page)
+        elif not is_logged_in:
+            logger.log("ℹ️ 未成功登入，跳過登出程序")
+        current_page = None  # 清空全局變數
+        is_logged_in = False  # 重置登入狀態
 
 def save_captcha_image(page, config, context):
     """儲存驗證碼圖片"""
@@ -164,7 +232,7 @@ def sys_login(page, config, context):
 
     try:
         time.sleep(2)  # 等待登入結果
-        if not page.wait_for_selector("text=下一頁 (開始選課)", timeout=3000).is_visible():
+        if not page.wait_for_selector("text=下一頁 (開始選課)", timeout=4000).is_visible():
             # print("❌ 驗證碼錯誤，請重新嘗試")
             logger.log("❌ 驗證碼錯誤，請重新嘗試")
             return False
@@ -197,7 +265,7 @@ def sys_logout(page):
 def to_search_page(page):
     # 處理登入後的彈窗
     try:
-        page.wait_for_selector("a.x-btn-button span:has-text('OK')", timeout=2000)
+        page.wait_for_selector("a.x-btn-button span:has-text('OK')", timeout=3000)
         page.click("a.x-btn-button span:has-text('OK')")
         # print("已點擊登入後的 OK")
         logger.log("已點擊登入後的 OK")
@@ -207,6 +275,7 @@ def to_search_page(page):
     
     # 點擊「下一頁 (開始選課)」進入主頁面
     try:
+        page.wait_for_selector("text=下一頁 (開始選課)", timeout=10000)
         page.click("text=下一頁 (開始選課)")
         # print("✅ 已點擊 '下一頁 (開始選課)'")
         logger.log("✅ 已點擊 '下一頁 (開始選課)'")
@@ -216,8 +285,12 @@ def to_search_page(page):
         return None
     
     # 等待 iframe 出現
-    page.wait_for_selector("iframe[name='stfseldListDo']", timeout=15000)
-    time.sleep(2)
+    try:
+        page.wait_for_selector("iframe[name='stfseldListDo']", timeout=15000)
+    except Exception as e:
+        # print(f"❌ 無法找到選課頁面的 iframe: {e}")
+        logger.log(f"❌ 無法找到選課頁面的 iframe: {e}")
+        return None
     
     # 切換到「我的選課」tab 的 iframe
     # print("切換到 iframe...")

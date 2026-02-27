@@ -7,3 +7,4 @@ sub.json
 sub.json.lock
 .venv
 log/
+sub.json
