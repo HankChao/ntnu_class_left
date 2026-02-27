@@ -350,7 +350,8 @@ def search_course(iframe, serial_number):
 
 
     # 看課程資訊
-    iframe.locator("span#button-1087-btnInnerEl").click()
+    iframe.locator("span#button-1087-btnInnerEl").click(timeout=10000)
+    time.sleep(0.5)  # 等待視窗彈出
     
     # 獲取課程資訊
     course_info = get_course_info(iframe, course_name, course_teacher, time_place, 
@@ -370,19 +371,22 @@ def get_course_info(iframe, course_name, course_teacher, time_place,
                     course_code, credit, must, department, used_eng):
     """獲取課程資訊並返回字典"""
     # 等待窗口出現
-    time.sleep(0.5)
+    time.sleep(1)  # 增加等待時間，確保視窗載入
+    
+    # 先等待 iframe 出現再切換
+    iframe.locator("iframe.x-window-item").wait_for(state="attached", timeout=10000)
     iframe = iframe.frame_locator("iframe.x-window-item")
     
     # 使用 locator 定位元素並獲取內容，並清理文本
-    serial_number = clean_text(iframe.locator("div#displayfield-1011-inputEl").inner_text())
-    stu_limit = clean_text(iframe.locator("div#displayfield-1012-inputEl").inner_text())
-    new_stu_keep = clean_text(iframe.locator("div#displayfield-1013-inputEl").inner_text())
-    alreay_stu = clean_text(iframe.locator("div#displayfield-1014-inputEl").inner_text())
-    still_not_stu = clean_text(iframe.locator("div#displayfield-1015-inputEl").inner_text())
-    code_stu = clean_text(iframe.locator("div#displayfield-1016-inputEl").inner_text())
-    used_code_stu = clean_text(iframe.locator("div#displayfield-1017-inputEl").inner_text())
-    class_limit = clean_text(iframe.locator("div#displayfield-1018-inputEl").inner_text())
-    note = clean_text(iframe.locator("div#displayfield-1019-inputEl").inner_text())
+    serial_number = clean_text(iframe.locator("div#displayfield-1011-inputEl").inner_text(timeout=10000))
+    stu_limit = clean_text(iframe.locator("div#displayfield-1012-inputEl").inner_text(timeout=10000))
+    new_stu_keep = clean_text(iframe.locator("div#displayfield-1013-inputEl").inner_text(timeout=10000))
+    alreay_stu = clean_text(iframe.locator("div#displayfield-1014-inputEl").inner_text(timeout=10000))
+    still_not_stu = clean_text(iframe.locator("div#displayfield-1015-inputEl").inner_text(timeout=10000))
+    code_stu = clean_text(iframe.locator("div#displayfield-1016-inputEl").inner_text(timeout=10000))
+    used_code_stu = clean_text(iframe.locator("div#displayfield-1017-inputEl").inner_text(timeout=10000))
+    class_limit = clean_text(iframe.locator("div#displayfield-1018-inputEl").inner_text(timeout=10000))
+    note = clean_text(iframe.locator("div#displayfield-1019-inputEl").inner_text(timeout=10000))
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     # 組合成字典，以 serial_number 為 key
     course_dict = {
