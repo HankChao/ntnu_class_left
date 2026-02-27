@@ -58,5 +58,5 @@ class Logger:
 
 # 創建全域 logger 實例
 main_logger = Logger("log/main.log", max_lines=50)
-playwright_logger = Logger("log/playwright.log", max_lines=50)
+playwright_logger = Logger("log/playwright.log", max_lines=1500)
 bot_logger = Logger("log/bot.log", max_lines=50)

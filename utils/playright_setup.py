@@ -33,24 +33,53 @@ def playwright_main():
     # 使用 Playwright
     try:
         with sync_playwright() as p:
-            # 啟動瀏覽器（可選擇 chromium, firefox, webkit）
-            # headless=True 表示背景執行（無視窗）
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context()     
-            page = context.new_page()
-
             while True:
-                playwright_run(page, config, context, manager)
-                time.sleep(config["login_retry_interval"])  # 等待n秒後重試登入
+                browser = None
+                try:
+                    # 每次循環都重新啟動瀏覽器（可選擇 chromium, firefox, webkit）
+                    # headless=True 表示背景執行（無視窗）
+                    logger.log("🔄 啟動瀏覽器...")
+                    browser = p.chromium.launch(headless=True)
+                    context = browser.new_context()     
+                    page = context.new_page()
+
+                    playwright_run(page, config, context, manager)
+                    
+                except Exception as e:
+                    logger.log(f"❌ 執行過程發生錯誤: {e}")
+                    logger.log(f"錯誤類型: {type(e).__name__}")
+                finally:
+                    # 確保關閉瀏覽器，釋放資源
+                    try:
+                        if browser:
+                            browser.close()
+                            logger.log("✅ 已關閉瀏覽器")
+                    except Exception as e:
+                        logger.log(f"⚠️ 關閉瀏覽器時發生錯誤: {e}")
+                
+                logger.log(f"⏳ 等待 {config['website_error_retry_interval']} 秒後重新啟動...")
+                time.sleep(config["website_error_retry_interval"])  # 等待n秒後重新啟動
 
     except KeyboardInterrupt:
-        logger.log("🛑 收到停止信號，playwright_run 已處理登出")
+        logger.log("🛑 收到停止信號，程式結束")
     except Exception as e:
         logger.log(f"❌ 主程式錯誤: {e}")
 
 def playwright_run(page, config, context, manager):
     try:
-        page.goto(config["sys"])
+        logger.log(f"🌐 正在訪問網站: {config['sys']}")
+        page.goto(config["sys"], wait_until="networkidle", timeout=60000)  # 等待網絡空閒
+        logger.log("✅ 頁面載入完成")
+        
+        # 檢查頁面是否正確載入
+        try:
+            page.wait_for_selector("input[name='userid']", timeout=10000)
+            logger.log("✅ 登入表單已載入")
+        except Exception as e:
+            logger.log(f"⚠️ 未找到登入表單，可能頁面載入異常")
+            logger.log(f"📄 當前頁面標題: {page.title()}")
+            logger.log(f"📍 當前頁面 URL: {page.url}")
+            raise  # 重新拋出，觸發重啟
 
         save_captcha_image(page, config, context)
         login = sys_login(page, config, context)
@@ -91,12 +120,9 @@ def playwright_run(page, config, context, manager):
         logger.log("⚠️ playwright_run 收到中斷信號")
         raise  # 重新拋出以便 playwright_main 處理
     except Exception as e:
-        # print(f"❌ 發生錯誤: {e}")
         logger.log(f"❌ 發生錯誤: {e}")
-        # print(f"錯誤類型: {type(e).__name__}")
         logger.log(f"錯誤類型: {type(e).__name__}")
-        # import traceback
-        # traceback.print_exc()
+        raise  # 重新拋出例外，讓 playwright_main 處理並重啟瀏覽器
     
     finally:
         sys_logout(page)

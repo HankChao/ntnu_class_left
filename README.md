@@ -37,6 +37,7 @@ SYS_ID=2
 # 系統運行參數
 LOGIN_RETRY_INTERVAL=30
 SEARCH_INTERVAL=20
+website_error_retry_interval=300
 ```
 ### 無頭模式
 預設使用無頭模式省資源，若要顯示瀏覽器視窗，請修改 `utils/playright_setup.py` 中的 `headless` 參數為 `False`
